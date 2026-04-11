@@ -454,14 +454,10 @@ def gen_sats_profiles(
             this_hid = hid[i]
             if keep[i] == 1 and model_L != MODEL_NONE:
                 if this_hid != prev_hid_L:
-                    if model_L == MODEL_BCM:
-                        tmp_bcm_L.reset_halo(hmass[i], hrvir[i], hconc[i])
-                    elif model_L == MODEL_NFW:
+                    if model_L == MODEL_NFW:
                         tmp_rs_L, tmp_conc_L, tmp_amp_L = nfw_reset_halo(hrvir[i], hconc[i])
                     prev_hid_L = this_hid
-                if model_L == MODEL_BCM:
-                    tmp_r_L = tmp_bcm_L.sample_radius(randoms_sate[i])
-                elif model_L == MODEL_NFW:
+                if model_L == MODEL_NFW:
                     tmp_r_L = nfw_sample_radius(randoms_sate[i], 
                                                 tmp_rs_L, 
                                                 tmp_conc_L, 
@@ -500,16 +496,12 @@ def gen_sats_profiles(
                 j1 += 1
             elif keep[i] == 2 and model_E != MODEL_NONE:
                 if this_hid != prev_hid_E:
-                    if model_E == MODEL_BCM:
-                        tmp_bcm_E.reset_halo(hmass[i], hrvir[i], hconc[i])
-                    elif model_E == MODEL_NFW:
+                    if model_E == MODEL_NFW:
                         tmp_rs_E, tmp_conc_E, tmp_amp_E = nfw_reset_halo(hrvir[i], hconc[i])
                     elif model_E == MODEL_NFWEXP:
                         tmp_rs_E, tmp_conc_E = nfwexp_reset_halo(hrvir[i], hconc[i])
                     prev_hid_E = this_hid
-                if model_E == MODEL_BCM:
-                    tmp_r_E = tmp_bcm_E.sample_radius(randoms_sate[i])
-                elif model_E == MODEL_NFW:
+                if model_E == MODEL_NFW:
                     tmp_r_E = nfw_sample_radius(randoms_sate[i],
                                                 tmp_rs_E, 
                                                 tmp_conc_E, 
@@ -556,14 +548,10 @@ def gen_sats_profiles(
                 j2 += 1
             elif keep[i] == 3 and model_Q != MODEL_NONE:
                 if this_hid != prev_hid_Q:
-                    if model_Q == MODEL_BCM:
-                        tmp_bcm_Q.reset_halo(hmass[i], hrvir[i], hconc[i])
-                    elif model_Q == MODEL_NFW:
+                    if model_Q == MODEL_NFW:
                         tmp_rs_Q, tmp_conc_Q, tmp_amp_Q = nfw_reset_halo(hrvir[i], hconc[i])
                     prev_hid_Q = this_hid
-                if model_Q == MODEL_BCM:
-                    tmp_r_Q = tmp_bcm_Q.sample_radius(randoms_sate[i])
-                elif model_Q == MODEL_NFW:
+                if model_Q == MODEL_NFW:
                     tmp_r_Q = nfw_sample_radius(randoms_sate[i],
                                                 tmp_rs_Q, 
                                                 tmp_conc_Q, 
