@@ -1,6 +1,5 @@
 import math
 import os
-from pathlib import Path
 import time
 import warnings
 
@@ -11,6 +10,8 @@ from astropy.io import ascii
 from astropy.table import Table
 from numba import njit, types
 from numba.typed import Dict
+from .profiles.pop_sats_profiles import gen_sats_profiles
+from .dv_error import redshift_error_draw
 
 # import yaml
 # config = yaml.safe_load(open('config/abacus_hod.yaml'))
@@ -125,15 +126,24 @@ def Gaussian_fun(x, mean, sigma):
     return 0.3989422804014327 / sigma * np.exp(-((x - mean) ** 2) / 2 / sigma**2)
 
 
+#@njit(fastmath=True)
+#def wrap(x, L):
+#    """Fast scalar mod implementation"""
+#    L2 = L / 2
+#    if x >= L2:
+#        return x - L
+#    elif x < -L2:
+#        return x + L
+#    return x
+
 @njit(fastmath=True)
 def wrap(x, L):
-    """Fast scalar mod implementation"""
-    L2 = L / 2
-    if x >= L2:
-        return x - L
-    elif x < -L2:
-        return x + L
-    return x
+    """Wrap x into [-L/2, L/2). """
+    half = 0.5 * L
+    if (-half <= x) and (x < half):
+        return x
+    k = math.floor((x + half) / L)
+    return x - L * k
 
 
 @njit(parallel=True, fastmath=True)
@@ -148,10 +158,19 @@ def gen_cent(
     deltac,
     fenv,
     shear,
+    u_cent_mag,
+    u_cent_sign,
     LRG_hod_dict,
     ELG_hod_dict,
     QSO_hod_dict,
     rsd,
+    want_dv,
+    u_grid_L, 
+    x_grid_L,
+    u_grid_E, 
+    x_grid_E,
+    u_grid_Q, 
+    x_grid_Q,
     inv_velz2kms,
     lbox,
     want_LRG,
@@ -267,6 +286,7 @@ def gen_cent(
     lrg_vy = np.empty(N_lrg, dtype=mass.dtype)
     lrg_vz = np.empty(N_lrg, dtype=mass.dtype)
     lrg_mass = np.empty(N_lrg, dtype=mass.dtype)
+    lrg_vsmear = np.empty(N_lrg, dtype=mass.dtype)
     lrg_id = np.empty(N_lrg, dtype=ids.dtype)
 
     # galaxy arrays
@@ -278,6 +298,7 @@ def gen_cent(
     elg_vy = np.empty(N_elg, dtype=mass.dtype)
     elg_vz = np.empty(N_elg, dtype=mass.dtype)
     elg_mass = np.empty(N_elg, dtype=mass.dtype)
+    elg_vsmear = np.empty(N_elg, dtype=mass.dtype)
     elg_id = np.empty(N_elg, dtype=ids.dtype)
 
     # galaxy arrays
@@ -289,6 +310,7 @@ def gen_cent(
     qso_vy = np.empty(N_qso, dtype=mass.dtype)
     qso_vz = np.empty(N_qso, dtype=mass.dtype)
     qso_mass = np.empty(N_qso, dtype=mass.dtype)
+    qso_vsmear = np.empty(N_qso, dtype=mass.dtype)
     qso_id = np.empty(N_qso, dtype=ids.dtype)
 
     # fill in the galaxy arrays
@@ -303,7 +325,12 @@ def gen_cent(
                 lrg_vy[j1] = vel[i, 1] + alpha_c_L * vdev[i, 1]  # velocity bias
                 lrg_z[j1] = pos[i, 2]
                 lrg_vz[j1] = vel[i, 2] + alpha_c_L * vdev[i, 2]  # velocity bias
-                # rsd only applies to the z direction
+                # rsd only applies to the z direction, dv treatment
+                if want_dv and u_grid_L.size > 0:
+                    tmp_dv_los_L = redshift_error_draw(u_cent_mag[i], u_cent_sign[i], u_grid_L, x_grid_L)
+                else:
+                    tmp_dv_los_L = 0.0
+                lrg_vsmear[j1] = tmp_dv_los_L
                 if rsd and origin is not None:
                     nx = lrg_x[j1] - origin[0]
                     ny = lrg_y[j1] - origin[1]
@@ -313,13 +340,13 @@ def gen_cent(
                     ny *= inv_norm
                     nz *= inv_norm
                     proj = inv_velz2kms * (
-                        lrg_vx[j1] * nx + lrg_vy[j1] * ny + lrg_vz[j1] * nz
+                        (lrg_vx[j1] * nx + lrg_vy[j1] * ny + lrg_vz[j1] * nz) + tmp_dv_los_L
                     )
                     lrg_x[j1] = lrg_x[j1] + proj * nx
                     lrg_y[j1] = lrg_y[j1] + proj * ny
                     lrg_z[j1] = lrg_z[j1] + proj * nz
                 elif rsd:
-                    lrg_z[j1] = wrap(pos[i, 2] + lrg_vz[j1] * inv_velz2kms, lbox)
+                    lrg_z[j1] = wrap(pos[i, 2] + (lrg_vz[j1] + tmp_dv_los_L) * inv_velz2kms, lbox)
                 lrg_mass[j1] = mass[i]
                 lrg_id[j1] = ids[i]
                 j1 += 1
@@ -331,6 +358,11 @@ def gen_cent(
                 elg_vy[j2] = vel[i, 1] + alpha_c_E * vdev[i, 1]  # velocity bias
                 elg_z[j2] = pos[i, 2]
                 elg_vz[j2] = vel[i, 2] + alpha_c_E * vdev[i, 2]  # velocity bias
+                if want_dv and u_grid_E.size > 0:
+                    tmp_dv_los_E = redshift_error_draw(u_cent_mag[i], u_cent_sign[i], u_grid_E, x_grid_E)
+                else:
+                    tmp_dv_los_E = 0.0
+                elg_vsmear[j2] = tmp_dv_los_E
                 # rsd only applies to the z direction
                 if rsd and origin is not None:
                     nx = elg_x[j2] - origin[0]
@@ -341,13 +373,13 @@ def gen_cent(
                     ny *= inv_norm
                     nz *= inv_norm
                     proj = inv_velz2kms * (
-                        elg_vx[j2] * nx + elg_vy[j2] * ny + elg_vz[j2] * nz
+                        (elg_vx[j2] * nx + elg_vy[j2] * ny + elg_vz[j2] * nz)+ tmp_dv_los_E
                     )
                     elg_x[j2] = elg_x[j2] + proj * nx
                     elg_y[j2] = elg_y[j2] + proj * ny
                     elg_z[j2] = elg_z[j2] + proj * nz
                 elif rsd:
-                    elg_z[j2] = wrap(pos[i, 2] + elg_vz[j2] * inv_velz2kms, lbox)
+                    elg_z[j2] = wrap(pos[i, 2] + (elg_vz[j2] + tmp_dv_los_E) * inv_velz2kms, lbox)
                 elg_mass[j2] = mass[i]
                 elg_id[j2] = ids[i]
                 j2 += 1
@@ -359,6 +391,11 @@ def gen_cent(
                 qso_vy[j3] = vel[i, 1] + alpha_c_Q * vdev[i, 1]  # velocity bias
                 qso_z[j3] = pos[i, 2]
                 qso_vz[j3] = vel[i, 2] + alpha_c_Q * vdev[i, 2]  # velocity bias
+                if want_dv and u_grid_Q.size > 0:
+                    tmp_dv_los_Q = redshift_error_draw(u_cent_mag[i], u_cent_sign[i], u_grid_Q, x_grid_Q)
+                else:
+                    tmp_dv_los_Q = 0.0
+                qso_vsmear[j3] = tmp_dv_los_Q
                 # rsd only applies to the z direction
                 if rsd and origin is not None:
                     nx = qso_x[j3] - origin[0]
@@ -369,13 +406,13 @@ def gen_cent(
                     ny *= inv_norm
                     nz *= inv_norm
                     proj = inv_velz2kms * (
-                        qso_vx[j3] * nx + qso_vy[j3] * ny + qso_vz[j3] * nz
+                        (qso_vx[j3] * nx + qso_vy[j3] * ny + qso_vz[j3] * nz) + tmp_dv_los_Q
                     )
                     qso_x[j3] = qso_x[j3] + proj * nx
                     qso_y[j3] = qso_y[j3] + proj * ny
                     qso_z[j3] = qso_z[j3] + proj * nz
                 elif rsd:
-                    qso_z[j3] = wrap(pos[i, 2] + qso_vz[j3] * inv_velz2kms, lbox)
+                    qso_z[j3] = wrap(pos[i, 2] + (qso_vz[j3]+tmp_dv_los_Q) * inv_velz2kms, lbox)
                 qso_mass[j3] = mass[i]
                 qso_id[j3] = ids[i]
                 j3 += 1
@@ -392,6 +429,7 @@ def gen_cent(
     LRG_dict['vy'] = lrg_vy
     LRG_dict['vz'] = lrg_vz
     LRG_dict['mass'] = lrg_mass
+    LRG_dict['vsmear'] = lrg_vsmear
     ID_dict['LRG'] = lrg_id
 
     ELG_dict['x'] = elg_x
@@ -401,6 +439,7 @@ def gen_cent(
     ELG_dict['vy'] = elg_vy
     ELG_dict['vz'] = elg_vz
     ELG_dict['mass'] = elg_mass
+    ELG_dict['vsmear'] = elg_vsmear
     ID_dict['ELG'] = elg_id
 
     QSO_dict['x'] = qso_x
@@ -410,420 +449,12 @@ def gen_cent(
     QSO_dict['vy'] = qso_vy
     QSO_dict['vz'] = qso_vz
     QSO_dict['mass'] = qso_mass
+    QSO_dict['vsmear'] = qso_vsmear
     ID_dict['QSO'] = qso_id
     return LRG_dict, ELG_dict, QSO_dict, ID_dict, keep
 
-
 @njit(parallel=True, fastmath=True)
-def getPointsOnSphere(nPoints, Nthread, seed=None):
-    """
-    --- Aiding function for NFW computation, generate random points in a sphere
-    """
-    numba.set_num_threads(Nthread)
-    ind = min(Nthread, nPoints)
-    # starting index of each thread
-    hstart = np.rint(np.linspace(0, nPoints, ind + 1))
-    ur = np.zeros((nPoints, 3), dtype=np.float64)
-    cmin = -1
-    cmax = +1
-
-    for tid in numba.prange(Nthread):
-        if seed is not None:
-            np.random.seed(seed[tid])
-        for i in range(hstart[tid], hstart[tid + 1]):
-            u1, u2 = np.random.uniform(0, 1), np.random.uniform(0, 1)
-            ra = 0 + u1 * (2 * np.pi - 0)
-            dec = np.pi - (np.arccos(cmin + u2 * (cmax - cmin)))
-
-            ur[i, 0] = np.sin(dec) * np.cos(ra)
-            ur[i, 1] = np.sin(dec) * np.sin(ra)
-            ur[i, 2] = np.cos(dec)
-    return ur
-
-
-@njit(fastmath=True, parallel=True)  # parallel=True,
-def compute_fast_NFW(
-    NFW_draw,
-    h_id,
-    x_h,
-    y_h,
-    z_h,
-    vx_h,
-    vy_h,
-    vz_h,
-    vrms_h,
-    c,
-    M,
-    Rvir,
-    rd_pos,
-    num_sat,
-    f_sigv,
-    vel_sat='rd_normal',
-    Nthread=16,
-    exp_frac=0,
-    exp_scale=1,
-    nfw_rescale=1,
-):
-    """
-    --- Compute NFW positions and velocities for satelitte galaxies
-    c: r98/r25
-    vrms_h: 'sigmav3d_L2com'
-    """
-    # numba.set_num_threads(Nthread)
-    # figuring out the number of halos kept for each thread
-    h_id = np.repeat(h_id, num_sat)
-    M = np.repeat(M, num_sat)
-    c = np.repeat(c, num_sat)
-    Rvir = np.repeat(Rvir, num_sat)
-    x_h = np.repeat(x_h, num_sat)
-    y_h = np.repeat(y_h, num_sat)
-    z_h = np.repeat(z_h, num_sat)
-    vx_h = np.repeat(vx_h, num_sat)
-    vy_h = np.repeat(vy_h, num_sat)
-    vz_h = np.repeat(vz_h, num_sat)
-    vrms_h = np.repeat(vrms_h, num_sat)
-    x_sat = np.empty_like(x_h)
-    y_sat = np.empty_like(y_h)
-    z_sat = np.empty_like(z_h)
-    vx_sat = np.empty_like(vx_h)
-    vy_sat = np.empty_like(vy_h)
-    vz_sat = np.empty_like(vz_h)
-
-    # starting index of each thread
-    hstart = np.rint(np.linspace(0, num_sat.sum(), Nthread + 1))
-    for tid in numba.prange(Nthread):
-        for i in range(int(hstart[tid]), int(hstart[tid + 1])):
-            ind = i
-            # while (NFW_draw[ind] > c[i]):
-            #    ind = np.random.randint(0, len(NFW_draw))
-            # etaVir = NFW_draw[ind]/c[i]  # =r/rvir
-            if np.random.uniform(0, 1) < exp_frac:
-                tt = np.random.exponential(exp_scale, size=1)[0]
-                etaVir = tt / c[i]
-            else:
-                while NFW_draw[ind] > c[i]:
-                    ind = np.random.randint(0, len(NFW_draw))
-                etaVir = NFW_draw[ind] / c[i] * nfw_rescale
-
-            p = etaVir * Rvir[i]
-            x_sat[i] = x_h[i] + rd_pos[i, 0] * p
-            y_sat[i] = y_h[i] + rd_pos[i, 1] * p
-            z_sat[i] = z_h[i] + rd_pos[i, 2] * p
-            if vel_sat == 'rd_normal':
-                sig = vrms_h[i] * 0.577 * f_sigv
-                vx_sat[i] = np.random.normal(loc=vx_h[i], scale=sig)
-                vy_sat[i] = np.random.normal(loc=vy_h[i], scale=sig)
-                vz_sat[i] = np.random.normal(loc=vz_h[i], scale=sig)
-            else:
-                raise ValueError('Wrong vel_sat argument only "rd_normal"')
-    return h_id, x_sat, y_sat, z_sat, vx_sat, vy_sat, vz_sat, M
-
-
-@njit(fastmath=True, parallel=True)
-def gen_sats_nfw(
-    NFW_draw,
-    hpos,
-    hvel,
-    hmass,
-    hid,
-    hdeltac,
-    hfenv,
-    hshear,
-    hvrms,
-    hc,
-    hrvir,
-    LRG_hod_dict,
-    ELG_hod_dict,
-    QSO_hod_dict,
-    want_LRG,
-    want_ELG,
-    want_QSO,
-    rsd,
-    inv_velz2kms,
-    lbox,
-    keep_cent,
-    vel_sat='rd_normal',
-    Nthread=16,
-):
-    """
-    Generate satellite galaxies on an NFW profile, with option for an extended profile. See Rocher et al. 2023.
-
-    Not yet on lightcone!! Different velocity bias treatment!! Not built for performance!!
-
-    """
-
-    if want_LRG:
-        logM_cut_L, logM1_L, sigma_L, alpha_L, kappa_L = (
-            LRG_hod_dict['logM_cut'],
-            LRG_hod_dict['logM1'],
-            LRG_hod_dict['sigma'],
-            LRG_hod_dict['alpha'],
-            LRG_hod_dict['kappa'],
-        )
-        Ac_L, As_L, Bc_L, Bs_L, ic_L = (
-            LRG_hod_dict['Acent'],
-            LRG_hod_dict['Asat'],
-            LRG_hod_dict['Bcent'],
-            LRG_hod_dict['Bsat'],
-            LRG_hod_dict['ic'],
-        )
-        f_sigv_L = LRG_hod_dict['f_sigv']
-
-    if want_ELG:
-        logM_cut_E, kappa_E, logM1_E, alpha_E, A_E = (
-            ELG_hod_dict['logM_cut'],
-            ELG_hod_dict['kappa'],
-            ELG_hod_dict['logM1'],
-            ELG_hod_dict['alpha'],
-            ELG_hod_dict['A_s'],
-        )
-        (
-            Ac_E,
-            As_E,
-            Bc_E,
-            Bs_E,
-            Cc_E,
-            Cs_E,
-            ic_E,
-        ) = (
-            ELG_hod_dict['Acent'],
-            ELG_hod_dict['Asat'],
-            ELG_hod_dict['Bcent'],
-            ELG_hod_dict['Bsat'],
-            ELG_hod_dict['Ccent'],
-            ELG_hod_dict['Csat'],
-            ELG_hod_dict['ic'],
-        )
-        logM1_EE, alpha_EE, logM1_EL, alpha_EL = (
-            ELG_hod_dict['logM1_EE'],
-            ELG_hod_dict['alpha_EE'],
-            ELG_hod_dict['logM1_EL'],
-            ELG_hod_dict['alpha_EL'],
-        )
-        f_sigv_E = ELG_hod_dict['f_sigv']
-        exp_frac = ELG_hod_dict['exp_frac']
-        exp_scale = ELG_hod_dict['exp_scale']
-        nfw_rescale = ELG_hod_dict['nfw_rescale']
-
-    if want_QSO:
-        logM_cut_Q, kappa_Q, logM1_Q, alpha_Q = (
-            QSO_hod_dict['logM_cut'],
-            QSO_hod_dict['kappa'],
-            QSO_hod_dict['logM1'],
-            QSO_hod_dict['alpha'],
-        )
-        Ac_Q, As_Q, Bc_Q, Bs_Q, ic_Q = (
-            QSO_hod_dict['Acent'],
-            QSO_hod_dict['Asat'],
-            QSO_hod_dict['Bcent'],
-            QSO_hod_dict['Bsat'],
-            QSO_hod_dict['ic'],
-        )
-        f_sigv_Q = QSO_hod_dict['f_sigv']
-
-    numba.set_num_threads(Nthread)
-
-    # compute nsate for each halo
-    # figuring out the number of particles kept for each thread
-    num_sats_L = np.zeros(len(hid), dtype=np.int64)
-    num_sats_E = np.zeros(len(hid), dtype=np.int64)
-    num_sats_Q = np.zeros(len(hid), dtype=np.int64)
-    hstart = np.rint(np.linspace(0, len(hid), Nthread + 1)).astype(
-        np.int64
-    )  # starting index of each thread
-    for tid in range(Nthread):
-        for i in range(hstart[tid], hstart[tid + 1]):
-            if want_LRG:
-                M1_L_temp = 10 ** (logM1_L + As_L * hdeltac[i] + Bs_L * hfenv[i])
-                logM_cut_L_temp = logM_cut_L + Ac_L * hdeltac[i] + Bc_L * hfenv[i]
-                base_p_L = (
-                    n_sat_LRG_modified(
-                        hmass[i],
-                        logM_cut_L_temp,
-                        10**logM_cut_L_temp,
-                        M1_L_temp,
-                        sigma_L,
-                        alpha_L,
-                        kappa_L,
-                    )
-                    * ic_L
-                )
-                num_sats_L[i] = np.random.poisson(base_p_L)
-            if want_ELG:
-                M1_E_temp = 10 ** (
-                    logM1_E + As_E * hdeltac[i] + Bs_E * hfenv[i] + Cs_E * hshear[i]
-                )
-                logM_cut_E_temp = (
-                    logM_cut_E + Ac_E * hdeltac[i] + Bc_E * hfenv[i] + Cc_E * hshear[i]
-                )
-                base_p_E = (
-                    N_sat_elg(
-                        hmass[i], 10**logM_cut_E_temp, kappa_E, M1_E_temp, alpha_E, A_E
-                    )
-                    * ic_E
-                )
-                # elg conformity
-                if keep_cent[i] == 1:
-                    M1_E_temp = 10 ** (logM1_EL + As_E * hdeltac[i] + Bs_E * hfenv[i])
-                    base_p_E = (
-                        N_sat_elg(
-                            hmass[i],
-                            10**logM_cut_E_temp,
-                            kappa_E,
-                            M1_E_temp,
-                            alpha_EL,
-                            A_E,
-                        )
-                        * ic_E
-                    )
-                elif keep_cent[i] == 2:
-                    M1_E_temp = 10 ** (
-                        logM1_EE + As_E * hdeltac[i] + Bs_E * hfenv[i]
-                    )  # M1_E_temp*10**delta_M1
-                    base_p_E = (
-                        N_sat_elg(
-                            hmass[i],
-                            10**logM_cut_E_temp,
-                            kappa_E,
-                            M1_E_temp,
-                            alpha_EE,
-                            A_E,
-                        )
-                        * ic_E
-                    )
-                num_sats_E[i] = np.random.poisson(base_p_E)
-
-            if want_QSO:
-                M1_Q_temp = 10 ** (logM1_Q + As_Q * hdeltac[i] + Bs_Q * hfenv[i])
-                logM_cut_Q_temp = logM_cut_Q + Ac_Q * hdeltac[i] + Bc_Q * hfenv[i]
-                base_p_Q = (
-                    N_sat_generic(
-                        hmass[i], 10**logM_cut_Q_temp, kappa_Q, M1_Q_temp, alpha_Q
-                    )
-                    * ic_Q
-                )
-                num_sats_Q[i] = np.random.poisson(base_p_Q)
-
-    # generate rdpos
-    rd_pos_L = getPointsOnSphere(np.sum(num_sats_L), Nthread)
-    rd_pos_E = getPointsOnSphere(np.sum(num_sats_E), Nthread)
-    rd_pos_Q = getPointsOnSphere(np.sum(num_sats_Q), Nthread)
-
-    # put satellites on NFW
-    h_id_L, x_sat_L, y_sat_L, z_sat_L, vx_sat_L, vy_sat_L, vz_sat_L, M_L = (
-        compute_fast_NFW(
-            NFW_draw,
-            hid,
-            hpos[:, 0],
-            hpos[:, 1],
-            hpos[:, 2],
-            hvel[:, 0],
-            hvel[:, 1],
-            hvel[:, 2],
-            hvrms,
-            hc,
-            hmass,
-            hrvir,
-            rd_pos_L,
-            num_sats_L,
-            f_sigv_L,
-            vel_sat,
-            Nthread,
-            exp_frac,
-            exp_scale,
-            nfw_rescale,
-        )
-    )
-    h_id_E, x_sat_E, y_sat_E, z_sat_E, vx_sat_E, vy_sat_E, vz_sat_E, M_E = (
-        compute_fast_NFW(
-            NFW_draw,
-            hid,
-            hpos[:, 0],
-            hpos[:, 1],
-            hpos[:, 2],
-            hvel[:, 0],
-            hvel[:, 1],
-            hvel[:, 2],
-            hvrms,
-            hc,
-            hmass,
-            hrvir,
-            rd_pos_E,
-            num_sats_E,
-            f_sigv_E,
-            vel_sat,
-            Nthread,
-            exp_frac,
-            exp_scale,
-            nfw_rescale,
-        )
-    )
-    h_id_Q, x_sat_Q, y_sat_Q, z_sat_Q, vx_sat_Q, vy_sat_Q, vz_sat_Q, M_Q = (
-        compute_fast_NFW(
-            NFW_draw,
-            hid,
-            hpos[:, 0],
-            hpos[:, 1],
-            hpos[:, 2],
-            hvel[:, 0],
-            hvel[:, 1],
-            hvel[:, 2],
-            hvrms,
-            hc,
-            hmass,
-            hrvir,
-            rd_pos_Q,
-            num_sats_Q,
-            f_sigv_Q,
-            vel_sat,
-            Nthread,
-            exp_frac,
-            exp_scale,
-            nfw_rescale,
-        )
-    )
-    # do rsd
-    if rsd:
-        z_sat_L = (z_sat_L + vz_sat_L * inv_velz2kms) % lbox
-        z_sat_E = (z_sat_E + vz_sat_E * inv_velz2kms) % lbox
-        z_sat_Q = (z_sat_Q + vz_sat_Q * inv_velz2kms) % lbox
-
-    LRG_dict = Dict.empty(key_type=types.unicode_type, value_type=float_array)
-    ELG_dict = Dict.empty(key_type=types.unicode_type, value_type=float_array)
-    QSO_dict = Dict.empty(key_type=types.unicode_type, value_type=float_array)
-    ID_dict = Dict.empty(key_type=types.unicode_type, value_type=int_array)
-    LRG_dict['x'] = x_sat_L
-    LRG_dict['y'] = y_sat_L
-    LRG_dict['z'] = z_sat_L
-    LRG_dict['vx'] = vx_sat_L
-    LRG_dict['vy'] = vy_sat_L
-    LRG_dict['vz'] = vz_sat_L
-    LRG_dict['mass'] = M_L
-    ID_dict['LRG'] = h_id_L
-
-    ELG_dict['x'] = x_sat_E
-    ELG_dict['y'] = y_sat_E
-    ELG_dict['z'] = z_sat_E
-    ELG_dict['vx'] = vx_sat_E
-    ELG_dict['vy'] = vy_sat_E
-    ELG_dict['vz'] = vz_sat_E
-    ELG_dict['mass'] = M_E
-    ID_dict['ELG'] = h_id_E
-
-    QSO_dict['x'] = x_sat_Q
-    QSO_dict['y'] = y_sat_Q
-    QSO_dict['z'] = z_sat_Q
-    QSO_dict['vx'] = vx_sat_Q
-    QSO_dict['vy'] = vy_sat_Q
-    QSO_dict['vz'] = vz_sat_Q
-    QSO_dict['mass'] = M_Q
-    ID_dict['QSO'] = h_id_Q
-
-    return LRG_dict, ELG_dict, QSO_dict, ID_dict
-
-
-@njit(parallel=True, fastmath=True)
-def gen_sats(
+def gen_sats_particles(
     ppos,
     pvel,
     hvel,
@@ -840,10 +471,19 @@ def gen_sats(
     ranksp,
     ranksr,
     ranksc,
+    u_sat_mag,
+    u_sat_sign,
     LRG_hod_dict,
     ELG_hod_dict,
     QSO_hod_dict,
     rsd,
+    want_dv,
+    u_grid_L, 
+    x_grid_L,
+    u_grid_E, 
+    x_grid_E,
+    u_grid_Q, 
+    x_grid_Q,
     inv_velz2kms,
     lbox,
     Mpart,
@@ -1103,6 +743,7 @@ def gen_sats(
     lrg_vy = np.empty(N_lrg, dtype=hmass.dtype)
     lrg_vz = np.empty(N_lrg, dtype=hmass.dtype)
     lrg_mass = np.empty(N_lrg, dtype=hmass.dtype)
+    lrg_vsmear = np.empty(N_lrg, dtype=hmass.dtype)
     lrg_id = np.empty(N_lrg, dtype=hid.dtype)
 
     # galaxy arrays
@@ -1114,6 +755,7 @@ def gen_sats(
     elg_vy = np.empty(N_elg, dtype=hmass.dtype)
     elg_vz = np.empty(N_elg, dtype=hmass.dtype)
     elg_mass = np.empty(N_elg, dtype=hmass.dtype)
+    elg_vsmear = np.empty(N_elg, dtype=hmass.dtype)
     elg_id = np.empty(N_elg, dtype=hid.dtype)
 
     # galaxy arrays
@@ -1125,6 +767,7 @@ def gen_sats(
     qso_vy = np.empty(N_qso, dtype=hmass.dtype)
     qso_vz = np.empty(N_qso, dtype=hmass.dtype)
     qso_mass = np.empty(N_qso, dtype=hmass.dtype)
+    qso_vsmear = np.empty(N_qso, dtype=hmass.dtype)
     qso_id = np.empty(N_qso, dtype=hid.dtype)
 
     # fill in the galaxy arrays
@@ -1144,6 +787,12 @@ def gen_sats(
                 lrg_vz[j1] = hvel[i, 2] + alpha_s_L * (
                     pvel[i, 2] - hvel[i, 2]
                 )  # velocity bias
+                if want_dv and u_grid_L.size > 0:
+                    tmp_dv_los_L = redshift_error_draw(u_sat_mag[i], u_sat_sign[i], u_grid_L, x_grid_L)
+                else:
+                    tmp_dv_los_L = 0.0
+                lrg_vsmear[j1] = tmp_dv_los_L
+                
                 if rsd and origin is not None:
                     nx = lrg_x[j1] - origin[0]
                     ny = lrg_y[j1] - origin[1]
@@ -1153,13 +802,13 @@ def gen_sats(
                     ny *= inv_norm
                     nz *= inv_norm
                     proj = inv_velz2kms * (
-                        lrg_vx[j1] * nx + lrg_vy[j1] * ny + lrg_vz[j1] * nz
+                        (lrg_vx[j1] * nx + lrg_vy[j1] * ny + lrg_vz[j1] * nz) + tmp_dv_los_L
                     )
                     lrg_x[j1] = lrg_x[j1] + proj * nx
                     lrg_y[j1] = lrg_y[j1] + proj * ny
                     lrg_z[j1] = lrg_z[j1] + proj * nz
                 elif rsd:
-                    lrg_z[j1] = wrap(lrg_z[j1] + lrg_vz[j1] * inv_velz2kms, lbox)
+                    lrg_z[j1] = wrap(lrg_z[j1] + (lrg_vz[j1] + tmp_dv_los_L) * inv_velz2kms, lbox)
                 lrg_mass[j1] = hmass[i]
                 lrg_id[j1] = hid[i]
                 j1 += 1
@@ -1176,6 +825,13 @@ def gen_sats(
                 elg_vz[j2] = hvel[i, 2] + alpha_s_E * (
                     pvel[i, 2] - hvel[i, 2]
                 )  # velocity bias
+
+                if want_dv and u_grid_E.size > 0:
+                    tmp_dv_los_E = redshift_error_draw(u_sat_mag[i], u_sat_sign[i], u_grid_E, x_grid_E)
+                else:
+                    tmp_dv_los_E = 0.0
+                elg_vsmear[j2] = tmp_dv_los_E
+                
                 if rsd and origin is not None:
                     nx = elg_x[j2] - origin[0]
                     ny = elg_y[j2] - origin[1]
@@ -1185,13 +841,13 @@ def gen_sats(
                     ny *= inv_norm
                     nz *= inv_norm
                     proj = inv_velz2kms * (
-                        elg_vx[j2] * nx + elg_vy[j2] * ny + elg_vz[j2] * nz
+                        (elg_vx[j2] * nx + elg_vy[j2] * ny + elg_vz[j2] * nz) + tmp_dv_los_E
                     )
                     elg_x[j2] = elg_x[j2] + proj * nx
                     elg_y[j2] = elg_y[j2] + proj * ny
                     elg_z[j2] = elg_z[j2] + proj * nz
                 elif rsd:
-                    elg_z[j2] = wrap(elg_z[j2] + elg_vz[j2] * inv_velz2kms, lbox)
+                    elg_z[j2] = wrap(elg_z[j2] + (elg_vz[j2]+tmp_dv_los_E) * inv_velz2kms, lbox)
                 elg_mass[j2] = hmass[i]
                 elg_id[j2] = hid[i]
                 j2 += 1
@@ -1208,6 +864,13 @@ def gen_sats(
                 qso_vz[j3] = hvel[i, 2] + alpha_s_Q * (
                     pvel[i, 2] - hvel[i, 2]
                 )  # velocity bias
+                if want_dv and u_grid_Q.size > 0:
+                    tmp_dv_los_Q = redshift_error_draw(u_sat_mag[i], u_sat_sign[i], u_grid_Q, x_grid_Q)
+                else:
+                    tmp_dv_los_Q = 0.0
+
+                qso_vsmear[j3] = tmp_dv_los_Q
+                
                 if rsd and origin is not None:
                     nx = qso_x[j3] - origin[0]
                     ny = qso_y[j3] - origin[1]
@@ -1217,13 +880,13 @@ def gen_sats(
                     ny *= inv_norm
                     nz *= inv_norm
                     proj = inv_velz2kms * (
-                        qso_vx[j3] * nx + qso_vy[j3] * ny + qso_vz[j3] * nz
+                        (qso_vx[j3] * nx + qso_vy[j3] * ny + qso_vz[j3] * nz)+tmp_dv_los_Q
                     )
                     qso_x[j3] = qso_x[j3] + proj * nx
                     qso_y[j3] = qso_y[j3] + proj * ny
                     qso_z[j3] = qso_z[j3] + proj * nz
                 elif rsd:
-                    qso_z[j3] = wrap(qso_z[j3] + qso_vz[j3] * inv_velz2kms, lbox)
+                    qso_z[j3] = wrap(qso_z[j3] + (qso_vz[j3]+tmp_dv_los_Q) * inv_velz2kms, lbox)
                 qso_mass[j3] = hmass[i]
                 qso_id[j3] = hid[i]
                 j3 += 1
@@ -1240,6 +903,7 @@ def gen_sats(
     LRG_dict['vy'] = lrg_vy
     LRG_dict['vz'] = lrg_vz
     LRG_dict['mass'] = lrg_mass
+    LRG_dict['vsmear'] = lrg_vsmear
     ID_dict['LRG'] = lrg_id
 
     ELG_dict['x'] = elg_x
@@ -1249,6 +913,7 @@ def gen_sats(
     ELG_dict['vy'] = elg_vy
     ELG_dict['vz'] = elg_vz
     ELG_dict['mass'] = elg_mass
+    ELG_dict['vsmear'] = elg_vsmear
     ID_dict['ELG'] = elg_id
 
     QSO_dict['x'] = qso_x
@@ -1258,6 +923,7 @@ def gen_sats(
     QSO_dict['vy'] = qso_vy
     QSO_dict['vz'] = qso_vz
     QSO_dict['mass'] = qso_mass
+    QSO_dict['vsmear'] = qso_vsmear
     ID_dict['QSO'] = qso_id
     return LRG_dict, ELG_dict, QSO_dict, ID_dict
 
@@ -1307,9 +973,16 @@ def gen_gals(
     Nthread,
     enable_ranks,
     rsd,
+    use_particles,
+    use_profiles,
+    want_dv,
+    u_grid_L, 
+    x_grid_L,
+    u_grid_E, 
+    x_grid_E,
+    u_grid_Q, 
+    x_grid_Q,
     verbose,
-    nfw,
-    NFW_draw=None,
 ):
     """
     parse hod parameters, pass them on to central and satellite generators
@@ -1374,10 +1047,25 @@ def gen_gals(
         LRG_hod_dict['Asat'] = LRG_HOD.get('Asat', 0.0)
         LRG_hod_dict['Bcent'] = LRG_HOD.get('Bcent', 0.0)
         LRG_hod_dict['Bsat'] = LRG_HOD.get('Bsat', 0.0)
+
+        if use_particles:
+            LRG_hod_dict['s'] = LRG_HOD.get('s', 0.0)
+            LRG_hod_dict['s_v'] = LRG_HOD.get('s_v', 0.0)
+            LRG_hod_dict['s_p'] = LRG_HOD.get('s_p', 0.0)
+            LRG_hod_dict['s_r'] = LRG_HOD.get('s_r', 0.0)
+                    
         LRG_hod_dict['ic'] = LRG_HOD.get('ic', 1.0)
 
-        LRG_hod_dict['f_sigv'] = LRG_HOD.get('f_sigv', 0)
-
+        if use_profiles:
+            LRG_hod_dict['profile_code'] = LRG_HOD.get('profile_code', 1)
+            if LRG_hod_dict['profile_code'] == 2:
+                LRG_hod_dict['theta_ej'] = LRG_HOD.get('theta_ej', 4.0)
+                LRG_hod_dict['logM_gas'] = LRG_HOD.get('logM_gas', 14.0)
+                LRG_hod_dict['mu'] = LRG_HOD.get('mu', 0.3)
+                LRG_hod_dict['eta_star'] = LRG_HOD.get('eta_star', 0.3)
+                LRG_hod_dict['eta_cga'] = LRG_HOD.get('eta_cga', 0.6)
+                LRG_hod_dict['max_grid_size'] = LRG_HOD.get('max_grid_size', 64)
+                LRG_hod_dict['zeta_grid_size'] = LRG_HOD.get('zeta_grid_size', 10)
     else:
         want_LRG = False
         LRG_hod_dict = nb.typed.Dict.empty(
@@ -1420,11 +1108,27 @@ def gen_gals(
         ELG_hod_dict['logM1_EL'] = ELG_HOD.get('logM1_EL', ELG_hod_dict['logM1'])
         ELG_hod_dict['alpha_EL'] = ELG_HOD.get('alpha_EL', ELG_hod_dict['alpha'])
 
-        ELG_hod_dict['f_sigv'] = ELG_HOD.get('f_sigv', 0)
-        ELG_hod_dict['exp_frac'] = ELG_HOD.get('exp_frac', 0)
-        ELG_hod_dict['exp_scale'] = ELG_HOD.get('exp_scale', 1)
-        ELG_hod_dict['nfw_rescale'] = ELG_HOD.get('nfw_rescale', 1)
 
+        if use_particles:
+            ELG_hod_dict['s'] = ELG_HOD.get('s', 0.0)
+            ELG_hod_dict['s_v'] = ELG_HOD.get('s_v', 0.0)
+            ELG_hod_dict['s_p'] = ELG_HOD.get('s_p', 0.0)
+            ELG_hod_dict['s_r'] = ELG_HOD.get('s_r', 0.0)
+        
+        if use_profiles:
+            ELG_hod_dict['profile_code'] = ELG_HOD.get('profile_code', 1)
+            if ELG_hod_dict['profile_code'] == 2:
+                ELG_hod_dict['theta_ej'] = ELG_HOD.get('theta_ej', 4.0)
+                ELG_hod_dict['logM_gas'] = ELG_HOD.get('logM_gas', 14.0)
+                ELG_hod_dict['mu'] = ELG_HOD.get('mu', 0.3)
+                ELG_hod_dict['eta_star'] = ELG_HOD.get('eta_star', 0.3)
+                ELG_hod_dict['eta_cga'] = ELG_HOD.get('eta_cga', 0.6)
+                ELG_hod_dict['max_grid_size'] = ELG_HOD.get('max_grid_size', 64)
+                ELG_hod_dict['zeta_grid_size'] = ELG_HOD.get('zeta_grid_size', 10)
+            elif ELG_hod_dict['profile_code'] == 3:
+                ELG_hod_dict['exp_frac'] = ELG_HOD.get('exp_frac', 0)
+                ELG_hod_dict['exp_scale'] = ELG_HOD.get('exp_scale', 1)
+                ELG_hod_dict['nfw_rescale'] = ELG_HOD.get('nfw_rescale', 1)
     else:
         want_ELG = False
         ELG_hod_dict = nb.typed.Dict.empty(
@@ -1459,8 +1163,23 @@ def gen_gals(
         QSO_hod_dict['Bsat'] = QSO_HOD.get('Bsat', 0.0)
         QSO_hod_dict['ic'] = QSO_HOD.get('ic', 1.0)
 
-        QSO_hod_dict['f_sigv'] = QSO_HOD.get('f_sigv', 0)
-
+        if use_particles:
+            QSO_hod_dict['s'] = QSO_HOD.get('s', 0.0)
+            QSO_hod_dict['s_v'] = QSO_HOD.get('s_v', 0.0)
+            QSO_hod_dict['s_p'] = QSO_HOD.get('s_p', 0.0)
+            QSO_hod_dict['s_r'] = QSO_HOD.get('s_r', 0.0)
+        
+        if use_profiles:
+            QSO_hod_dict['profile_code'] = QSO_HOD.get('profile_code', 1)
+            if QSO_hod_dict['profile_code'] == 2:
+                QSO_hod_dict['theta_ej'] = QSO_HOD.get('theta_ej', 4.0)
+                QSO_hod_dict['logM_gas'] = QSO_HOD.get('logM_gas', 14.0)
+                QSO_hod_dict['mu'] = QSO_HOD.get('mu', 0.3)
+                QSO_hod_dict['eta_star'] = QSO_HOD.get('eta_star', 0.3)
+                QSO_hod_dict['eta_cga'] = QSO_HOD.get('eta_cga', 0.6)
+                QSO_hod_dict['max_grid_size'] = QSO_HOD.get('max_grid_size', 64)
+                QSO_hod_dict['zeta_grid_size'] = QSO_HOD.get('zeta_grid_size', 10)
+        
     else:
         want_QSO = False
         QSO_hod_dict = nb.typed.Dict.empty(
@@ -1485,10 +1204,19 @@ def gen_gals(
         halos_array.get('hdeltac', np.zeros(len(halos_array['hmass']))),
         halos_array.get('hfenv', np.zeros(len(halos_array['hmass']))),
         halos_array.get('hshear', np.zeros(len(halos_array['hmass']))),
+        halos_array['u_cent_mag'],
+        halos_array['u_cent_sign'],        
         LRG_hod_dict,
         ELG_hod_dict,
         QSO_hod_dict,
         rsd,
+        want_dv,
+        u_grid_L, 
+        x_grid_L,
+        u_grid_E, 
+        x_grid_E,
+        u_grid_Q, 
+        x_grid_Q,
         inv_velz2kms,
         lbox,
         want_LRG,
@@ -1501,36 +1229,46 @@ def gen_gals(
         print('generating centrals took ', time.time() - start)
 
     start = time.time()
-    if nfw:
-        warnings.warn(
-            'NFW profile is unoptimized. It has different velocity bias. It does not support lightcone.'
-        )
-        LRG_dict_sat, ELG_dict_sat, QSO_dict_sat, ID_dict_sat = gen_sats_nfw(
-            NFW_draw,
-            halos_array['hpos'],
-            halos_array['hvel'],
-            halos_array['hmass'],
-            halos_array['hid'],
-            halos_array.get('hdeltac', np.zeros(len(halos_array['hmass']))),
-            halos_array.get('hfenv', np.zeros(len(halos_array['hmass']))),
-            halos_array.get('hshear', np.zeros(len(halos_array['hmass']))),
-            halos_array['hsigma3d'],
-            halos_array['hc'],
-            halos_array['hrvir'],
-            LRG_hod_dict,
-            ELG_hod_dict,
+    if use_profiles:
+        LRG_dict_sat, ELG_dict_sat, QSO_dict_sat, ID_dict_sat = gen_sats_profiles(
+            subsample['ppos'], 
+            subsample['phpos'], 
+            subsample['phvel'], 
+            subsample['phconc'], 
+            subsample['phrvir'], 
+            subsample['phmass'], 
+            subsample['phveldev'], 
+            subsample['phid'], 
+            subsample['pweights'], 
+            subsample['prandoms'], 
+            subsample['prandoms_sate'],
+            subsample.get('pdeltac', np.zeros(len(subsample['phid']))),
+            subsample.get('pfenv', np.zeros(len(subsample['phid']))),
+            subsample['extra_randoms'],
+            subsample['u_sat_mag'],
+            subsample['u_sat_sign'],
+            LRG_hod_dict, 
+            ELG_hod_dict, 
             QSO_hod_dict,
-            want_LRG,
-            want_ELG,
-            want_QSO,
             rsd,
-            inv_velz2kms,
-            lbox,
-            keep_cent,
-            Nthread=Nthread,
+            want_dv,
+            u_grid_L, 
+            x_grid_L,
+            u_grid_E, 
+            x_grid_E,
+            u_grid_Q, 
+            x_grid_Q,
+            inv_velz2kms, 
+            lbox, 
+            want_LRG, 
+            want_ELG, 
+            want_QSO, 
+            Nthread, 
+            origin,
+            keep_cent[subsample['pinds']]
         )
-    else:
-        LRG_dict_sat, ELG_dict_sat, QSO_dict_sat, ID_dict_sat = gen_sats(
+    elif use_particles:
+        LRG_dict_sat, ELG_dict_sat, QSO_dict_sat, ID_dict_sat = gen_sats_particles(
             subsample['ppos'],
             subsample['pvel'],
             subsample['phvel'],
@@ -1547,10 +1285,19 @@ def gen_gals(
             subsample['pranksp'],
             subsample['pranksr'],
             subsample['pranksc'],
+            subsample['u_sat_mag'],
+            subsample['u_sat_sign'],
             LRG_hod_dict,
             ELG_hod_dict,
             QSO_hod_dict,
             rsd,
+            want_dv,
+            u_grid_L, 
+            x_grid_L,
+            u_grid_E, 
+            x_grid_E,
+            u_grid_Q, 
+            x_grid_Q,
             inv_velz2kms,
             lbox,
             params['Mpart'],
@@ -1560,6 +1307,10 @@ def gen_gals(
             Nthread,
             origin,
             keep_cent[subsample['pinds']],
+        )
+    else:
+        raise RuntimeError(
+            'must chose a satellite proxy'
         )
     if verbose:
         print('generating satellites took ', time.time() - start)
@@ -1600,8 +1351,15 @@ def gen_gal_cat(
     Nthread=16,
     enable_ranks=False,
     rsd=True,
-    nfw=False,
-    NFW_draw=None,
+    use_particles=False,# H.Z. proxy choice
+    use_profiles=True,
+    want_dv=False,
+    u_grid_L=None, 
+    x_grid_L=None,
+    u_grid_E=None, 
+    x_grid_E=None,
+    u_grid_Q=None, 
+    x_grid_Q=None,
     write_to_disk=False,
     savedir='./',
     verbose=False,
@@ -1628,8 +1386,11 @@ def gen_gal_cat(
     rsd : boolean
         Flag of whether to implement RSD.
 
-    nfw : boolean
-        Flag of whether to generate satellites from an NFW profile.
+    use_particles : boolean
+        Flag of whether to generate satellites using particles.
+
+    use_profiles : boolean
+        Flag of whether to generate satellites from profiles.
 
     write_to_disk : boolean
         Flag of whether to output to disk.
@@ -1657,7 +1418,6 @@ def gen_gal_cat(
 
     if not isinstance(rsd, bool):
         raise ValueError('Error: rsd has to be a boolean')
-
     # find the halos, populate them with galaxies and write them to files
     HOD_dict = gen_gals(
         halo_data,
@@ -1667,26 +1427,17 @@ def gen_gal_cat(
         Nthread,
         enable_ranks,
         rsd,
+        use_particles,# H.Z. proxy choice
+        use_profiles,
+        want_dv,
+        u_grid_L, 
+        x_grid_L,
+        u_grid_E, 
+        x_grid_E,
+        u_grid_Q, 
+        x_grid_Q,
         verbose,
-        nfw,
-        NFW_draw,
     )
-
-    if write_to_disk and tracers:
-        if rsd:
-            rsd_string = '_rsd'
-        else:
-            rsd_string = ''
-
-        savedir = Path(savedir)
-        if fn_ext is None:
-            outdir = (savedir) / ('galaxies' + rsd_string)
-        else:
-            outdir = (savedir) / ('galaxies' + rsd_string + fn_ext)
-
-        # create directories if not existing
-        os.makedirs(outdir, exist_ok=True)
-
     # how many galaxies were generated and write them to disk
     for tracer in tracers.keys():
         Ncent = HOD_dict[tracer]['Ncent']
@@ -1701,6 +1452,19 @@ def gen_gal_cat(
         if write_to_disk:
             if verbose:
                 print('outputting galaxies to disk')
+
+            if rsd:
+                rsd_string = '_rsd'
+            else:
+                rsd_string = ''
+
+            if fn_ext is None:
+                outdir = (savedir) / ('galaxies' + rsd_string)
+            else:
+                outdir = (savedir) / ('galaxies' + rsd_string + fn_ext)
+
+            # create directories if not existing
+            os.makedirs(outdir, exist_ok=True)
 
             # save to file
             # outdict =

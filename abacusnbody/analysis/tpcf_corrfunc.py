@@ -13,6 +13,13 @@ except ImportError as e:
 
 from scipy.special import legendre
 
+def as_lbox3(lbox):
+    lbox = np.asarray(lbox)
+    if lbox.ndim == 0:  # scalar
+        return np.array([lbox, lbox, lbox], dtype=np.float32)
+    return lbox.astype(np.float32, copy=False)
+
+
 
 def tpcf_multipole(s_mu_tcpf_result, mu_bins, order=0):
     r"""
@@ -136,7 +143,7 @@ def calc_xirppi_fast(
     x1 = x1.astype(np.float32)
     y1 = y1.astype(np.float32)
     z1 = z1.astype(np.float32)
-    lbox = np.float32(lbox)
+    lbox=as_lbox3(lbox)
 
     if autocorr == 1:
         # results = DDrppi(autocorr, Nthread, pimax, rpbins, x1, y1, z1,
@@ -178,7 +185,7 @@ def calc_xirppi_fast(
             verbose=False,
         )
         DD_counts = results['npairs']
-    print('corrfunc took time ', time.time() - cf_start)
+    #print('corrfunc took time ', time.time() - cf_start)
 
     DD_counts_new = np.array(
         [
@@ -189,17 +196,26 @@ def calc_xirppi_fast(
     DD_counts_new = DD_counts_new.reshape((len(rpbins) - 1, int(pimax / pi_bin_size)))
 
     # RR_counts_new = np.zeros((len(rpbins) - 1, int(pimax/pi_bin_size)))
+#    RR_counts_new = (
+#        np.pi
+#        * (rpbins[1:] ** 2 - rpbins[:-1] ** 2)
+#        * pi_bin_size
+#        / lbox**3
+#        * ND1
+#        * ND2
+#        * 2
+#    )
     RR_counts_new = (
         np.pi
         * (rpbins[1:] ** 2 - rpbins[:-1] ** 2)
         * pi_bin_size
-        / lbox**3
+        / np.prod(lbox)
         * ND1
         * ND2
         * 2
     )
     xirppi = DD_counts_new / RR_counts_new[:, None] - 1
-    print('corrfunc took ', time.time() - start, 'ngal ', len(x1))
+    #print('corrfunc took ', time.time() - start, 'ngal ', len(x1))
     return xirppi
 
 
@@ -234,7 +250,7 @@ def calc_multipole_fast(
     y1 = y1.astype(np.float32)
     z1 = z1.astype(np.float32)
     # pos1 = np.array([x1, y1, z1]).T % lbox
-    lbox = np.float32(lbox)
+    lbox=as_lbox3(lbox)
 
     if autocorr == 1:
         results = DDsmu(
@@ -275,18 +291,28 @@ def calc_multipole_fast(
     DD_counts = DD_counts.reshape((len(sbins) - 1, nbins_mu))
 
     mu_bins = np.linspace(0, 1, nbins_mu + 1)
+#    RR_counts = (
+#        2
+#        * np.pi
+#        / 3
+#        * (sbins[1:, None] ** 3 - sbins[:-1, None] ** 3)
+#        * (mu_bins[None, 1:] - mu_bins[None, :-1])
+#        / lbox**3
+#        * ND1
+#        * ND2
+#        * 2
+#    )
     RR_counts = (
         2
         * np.pi
         / 3
         * (sbins[1:, None] ** 3 - sbins[:-1, None] ** 3)
         * (mu_bins[None, 1:] - mu_bins[None, :-1])
-        / lbox**3
+        / np.prod(lbox)
         * ND1
         * ND2
         * 2
     )
-
     xi_s_mu = DD_counts / RR_counts - 1
 
     xi_array = []
@@ -320,7 +346,7 @@ def calc_wp_fast(
     x1 = x1.astype(np.float32)
     y1 = y1.astype(np.float32)
     z1 = z1.astype(np.float32)
-    lbox = np.float32(lbox)
+    lbox=as_lbox3(lbox)
 
     if autocorr == 1:
         # results = DDrppi(autocorr, Nthread, pimax, rpbins, x1, y1, z1,
@@ -361,12 +387,13 @@ def calc_wp_fast(
             max_cells_per_dim=num_cells,
         )
         DD_counts = results['npairs']
-    print('corrfunc took time ', time.time() - cf_start)
+    #print('corrfunc took time ', time.time() - cf_start)
     DD_counts = DD_counts.reshape((len(rpbins) - 1, int(pimax)))
 
     # RR_counts = np.zeros((len(rpbins) - 1, int(pimax)))
     # for i in range(len(rpbins) - 1):
-    RR_counts = np.pi * (rpbins[1:] ** 2 - rpbins[:-1] ** 2) / lbox**3 * ND1 * ND2 * 2
+    #RR_counts = np.pi * (rpbins[1:] ** 2 - rpbins[:-1] ** 2) / lbox**3 * ND1 * ND2 * 2
+    RR_counts = np.pi * (rpbins[1:] ** 2 - rpbins[:-1] ** 2) / np.prod(lbox) * ND1 * ND2 * 2
     xirppi = DD_counts / RR_counts[:, None] - 1
 
     return 2 * np.sum(xirppi, axis=1)
