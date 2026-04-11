@@ -136,30 +136,6 @@ def gen_sats_profiles(
         )
         profile_L = int(LRG_hod_dict['profile_code'])
         tol_L = 1e-4
-        if profile_L== MODEL_BCM:
-            theta_ej_L, logM_gas_L, mu_L, eta_star_L, eta_cga_L, grid_size_L, zeta_grid_size_L = (
-                LRG_hod_dict['theta_ej'],
-                LRG_hod_dict['logM_gas'],
-                LRG_hod_dict['mu'],
-                LRG_hod_dict['eta_star'],
-                LRG_hod_dict['eta_cga'],
-                int(LRG_hod_dict['max_grid_size']),
-                int(LRG_hod_dict['zeta_grid_size']),
-            )
-            M_gas_L = 10**logM_gas_L
-            theta_co_L = 0.1
-            eps_L, A_star_L, M1_star_L = 4.0, 0.09, 2.5e11
-            coeff_Rh_L = 0.015        
-            a_dm_L, n_dm_L = 0.3, 2.0
-            Omega0_b, Omega0_M = 0.04930169,0.31519172
-            f_dm0 = (Omega0_M - Omega0_b) / Omega0_M
-            
-            grid_buf_nfw_pool_L = np.empty((Nthread, 2*grid_size_L), dtype=np.float64)
-            f_buf_nfw_pool_L    = np.empty((Nthread, 2*grid_size_L), dtype=np.float64)
-            grid_buf_gas_pool_L = np.empty((Nthread, 2*grid_size_L), dtype=np.float64)
-            f_buf_gas_pool_L    = np.empty((Nthread, 2*grid_size_L), dtype=np.float64)
-            zeta_r_pool_L       = np.empty((Nthread, zeta_grid_size_L), dtype=np.float64)
-            zeta_vals_pool_L    = np.empty((Nthread, zeta_grid_size_L), dtype=np.float64)
                         
     if want_ELG:
         logM_cut_E, kappa_E, logM1_E, alpha_E, A_E = (
@@ -194,31 +170,7 @@ def gen_sats_profiles(
         )
         profile_E = int(ELG_hod_dict['profile_code'])
         tol_E = 1e-4
-        if profile_E==MODEL_BCM: 
-            theta_ej_E, logM_gas_E, mu_E, eta_star_E, eta_cga_E, grid_size_E, zeta_grid_size_E = (
-                ELG_hod_dict['theta_ej'],
-                ELG_hod_dict['logM_gas'],
-                ELG_hod_dict['mu'],
-                ELG_hod_dict['eta_star'],
-                ELG_hod_dict['eta_cga'],
-                int(ELG_hod_dict['max_grid_size']),
-                int(ELG_hod_dict['zeta_grid_size']),
-            )
-            M_gas_E = 10**logM_gas_E
-            theta_co_E = 0.1
-            eps_E, A_star_E, M1_star_E = 4.0, 0.09, 2.5e11
-            coeff_Rh_E = 0.015        
-            a_dm_E, n_dm_E = 0.3, 2.0
-            Omega0_b, Omega0_M = 0.04930169,0.31519172
-            f_dm0 = (Omega0_M - Omega0_b) / Omega0_M    
-            
-            grid_buf_nfw_pool_E = np.empty((Nthread, 2*grid_size_E), dtype=np.float64)
-            f_buf_nfw_pool_E    = np.empty((Nthread, 2*grid_size_E), dtype=np.float64)
-            grid_buf_gas_pool_E = np.empty((Nthread, 2*grid_size_E), dtype=np.float64)
-            f_buf_gas_pool_E    = np.empty((Nthread, 2*grid_size_E), dtype=np.float64)
-            zeta_r_pool_E       = np.empty((Nthread, zeta_grid_size_E), dtype=np.float64)
-            zeta_vals_pool_E    = np.empty((Nthread, zeta_grid_size_E), dtype=np.float64)
-        elif profile_E==MODEL_NFWEXP:
+        if profile_E==MODEL_NFWEXP:
             exp_frac_E = ELG_hod_dict['exp_frac']
             exp_scale_E = ELG_hod_dict['exp_scale']
             nfw_rescale_E = ELG_hod_dict['nfw_rescale']            
@@ -240,30 +192,6 @@ def gen_sats_profiles(
         )
         profile_Q = int(QSO_hod_dict['profile_code'])
         tol_Q = 1e-4
-        if profile_Q==MODEL_BCM:
-            theta_ej_Q, logM_gas_Q, mu_Q, eta_star_Q, eta_cga_Q, grid_size_Q, zeta_grid_size_Q = (
-                QSO_hod_dict['theta_ej'],
-                QSO_hod_dict['logM_gas'],
-                QSO_hod_dict['mu'],
-                QSO_hod_dict['eta_star'],
-                QSO_hod_dict['eta_cga'],
-                int(QSO_hod_dict['max_grid_size']),
-                int(QSO_hod_dict['zeta_grid_size']),
-            )
-            M_gas_Q = 10**logM_gas_Q
-            theta_co_Q = 0.1
-            eps_Q, A_star_Q, M1_star_Q = 4.0, 0.09, 2.5e11
-            coeff_Rh_Q = 0.015        
-            a_dm_Q, n_dm_Q = 0.3, 2.0
-            Omega0_b, Omega0_M = 0.04930169,0.31519172
-            f_dm0 = (Omega0_M - Omega0_b) / Omega0_M
-            
-            grid_buf_nfw_pool_Q = np.empty((Nthread, 2*grid_size_Q), dtype=np.float64)
-            f_buf_nfw_pool_Q    = np.empty((Nthread, 2*grid_size_Q), dtype=np.float64)
-            grid_buf_gas_pool_Q = np.empty((Nthread, 2*grid_size_Q), dtype=np.float64)
-            f_buf_gas_pool_Q    = np.empty((Nthread, 2*grid_size_Q), dtype=np.float64)
-            zeta_r_pool_Q       = np.empty((Nthread, zeta_grid_size_Q), dtype=np.float64)
-            zeta_vals_pool_Q    = np.empty((Nthread, zeta_grid_size_Q), dtype=np.float64)
 
     H = len(hmass)  # num of particles
     numba.set_num_threads(Nthread)
@@ -428,25 +356,19 @@ def gen_sats_profiles(
 
         model_L = MODEL_NONE
         if want_LRG:
-            if profile_L == MODEL_BCM:
-                raise NotImplementedError("BCM profile is not available in the this branch.")
-            elif profile_L == MODEL_NFW:
+            if profile_L == MODEL_NFW:
                 model_L = MODEL_NFW
 
         model_E = MODEL_NONE
         if want_ELG:
-            if profile_E == MODEL_BCM: 
-                raise NotImplementedError("BCM profile is not available in the this branch.")
-            elif profile_E == MODEL_NFW: 
+            if profile_E == MODEL_NFW: 
                 model_E = MODEL_NFW
             elif profile_E == MODEL_NFWEXP:
                 model_E = MODEL_NFWEXP
                 
         model_Q = MODEL_NONE
         if want_QSO:
-            if profile_Q == MODEL_BCM:
-                raise NotImplementedError("BCM profile is not available in the this branch.")
-            elif profile_Q == MODEL_NFW:
+            if profile_Q == MODEL_NFW:
                 model_Q = MODEL_NFW
             
         j1 = gstart[tid, 0]; j2 = gstart[tid, 1]; j3 = gstart[tid, 2]
