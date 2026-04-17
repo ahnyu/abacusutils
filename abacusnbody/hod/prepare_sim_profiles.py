@@ -491,6 +491,7 @@ def prepare_slab(
             central_pos = halos['x_L2com']
             central_mass = halos['N'] * Mpart
             central_rvir = halos['r98_L2com']
+            central_id = halos['id']
 
             if len(np.unique(central_id)) != len(central_id):
                 raise RuntimeError(f"Duplicate halo IDs found inside central slab {i}.")
